@@ -200,7 +200,14 @@ def process_account(account, test_mode=False):
                 "action": "use_inventory"
             })
             if "_error" not in r and r.get("success"):
-                results["actions"].append(f"used_{item}")
+                # Map item names to short format
+                item_map = {
+                    "magic_apple": "u-apple",
+                    "magic_towel": "u-towel", 
+                    "wizard_coffee": "u-coffe"
+                }
+                action_name = item_map.get(item, f"used_{item}")
+                results["actions"].append(action_name)
                 results["xp"] += r.get("xpGained", 0)
                 results["lumis"] = r.get("newLumis", results["lumis"])
                 inventory[item] = item_count - 1
