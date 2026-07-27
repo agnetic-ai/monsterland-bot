@@ -37,6 +37,12 @@ VITALS_THRESHOLD = {
     "energy": 20.0
 }
 
+# Sleep threshold (sleep if energy below this)
+SLEEP_THRESHOLD = 10.0
+
+# Level up config (min LUMIS surplus before level up)
+LEVELUP_MIN_LUMIS = 5000
+
 # Item to vital mapping
 ITEM_VITAL_MAP = {
     "magic_apple": "food",
@@ -196,7 +202,55 @@ def process_account(account, test_mode=False):
         if "_error" not in r and "data:" in str(r):
             results["actions"].append("chat_xp")
     
-    # 5. Get final LUMIS
+    # 5. Auto-level up (if XP sufficient + LUMIS surplus)
+    monster_xp = monster.get("experience", 0)
+    monster_level = monster.get("level", 1)
+    current_lumis = results["lumis"]
+    
+    # Get XP required for next level (approx formula: level * 200)
+    xp_required = monster_level * 200
+    
+    if monster_xp >= xp_required and current_lumis >= LEVELUP_MIN_LUMIS:
+        r = curl_request("POST", "/api/xp", init_data, {
+            "action": "level_up",
+            "monsterId": monster_id
+        })
+        if "_error" not in r and r.get("success"):
+            new_level = r.get("newLevel", monster_level)
+            new_lumis = r.get("newLumis", current_lumis)
+            results["actions"].append(f"lvlup->{new_level}")
+            results["lumis"] = new_lumis
+            results["xp"] = r.get("userXP", {}).get("xpAwarded", 0)
+        else:
+            err = r.get("_error") or r.get("error") or "unknown"
+            if "not enough xp" not in err.lower():
+                results["errors"].append(f"levelup: {err[:25]}")
+    
+    # 6. Sleep cycle (if energy very low + coffee available)
+    current_energy = vitals.get("energy", 100)
+    coffee = inventory.get("wizard_coffee", 0)
+    
+    if current_energy < SLEEP_THRESHOLD and coffee >= 2:  # Keep 1 coffee reserve
+        r = curl_request("POST", "/api/sleep", init_data, {
+            "monsterId": monster_id,
+            "action": "start_sleep"
+        })
+        if "_error" not in r and r.get("success"):
+            results["actions"].append("sleep")
+            results["lumis"] = r.get("newLumis", results["lumis"])
+            # Immediately wake up (we have coffee)
+            r2 = curl_request("POST", "/api/sleep", init_data, {
+                "monsterId": monster_id,
+                "action": "wake_up"
+            })
+            if "_error" not in r2 and r2.get("success"):
+                results["actions"].append("woke")
+                results["lumis"] = r2.get("newLumis", results["lumis"])
+        else:
+            err = r.get("_error") or r.get("error") or "unknown"
+            results["errors"].append(f"sleep: {err[:20]}")
+    
+    # 7. Get final LUMIS
     profile_final = curl_request("GET", "/api/profile", init_data)
     if "_error" not in profile_final:
         results["lumis"] = profile_final.get("user", {}).get("stats", {}).get("lumis", results["lumis"])
