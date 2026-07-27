@@ -284,32 +284,39 @@ def process_account(account, test_mode=False):
 def format_output(results_list):
     """Format output for Telegram (clean dash-separated)"""
     lines = []
-    lines.append("Monsterland - Farming Cycle")
+    lines.append("Monsterland Farm")
     lines.append("-" * 38)
     
     total_lumis = 0
     ok_count = 0
+    fail_count = 0
+    total_xp = 0
     
     for r in results_list:
-        name = r.get("name", "unknown")[:12].ljust(12)
+        name = r.get("name", "unknown")[:12]
         lumis = r.get("lumis", 0)
+        xp = r.get("xp", 0)
         total_lumis += lumis
+        total_xp += xp
         
         if r.get("ok"):
             ok_count += 1
             actions = ", ".join(r.get("actions", []))
             if actions:
-                lines.append(f"{name} {lumis:>8}  {actions}")
+                lines.append(f"{name:<12} {lumis:>8}  {actions}")
             else:
-                lines.append(f"{name} {lumis:>8}")
+                lines.append(f"{name:<12} {lumis:>8}")
         else:
+            fail_count += 1
             errors = r.get("errors", ["unknown"])
-            lines.append(f"{name} {'FAIL':>8}  {errors[0][:20]}")
+            lines.append(f"{name:<12} {'FAIL':>8}  {errors[0][:20]}")
     
     lines.append("-" * 38)
-    lines.append(f"{'Accounts':12} {len(results_list):>8}")
-    lines.append(f"{'OK':12} {ok_count:>8}")
-    lines.append(f"{'Total LUMIS':12} {total_lumis:>8}")
+    lines.append(f"Accounts          {len(results_list)}")
+    lines.append(f"OK                {ok_count}")
+    if fail_count > 0:
+        lines.append(f"Failed            {fail_count}")
+    lines.append(f"Total LUMIS       {total_lumis}")
     lines.append("-" * 38)
     
     return "\n".join(lines)
