@@ -297,8 +297,11 @@ def format_output(results_list):
         
         if r.get("ok"):
             ok_count += 1
-            actions = ", ".join(r.get("actions", []))[:20]
-            lines.append(f"{name} {lumis:>8}  {actions}")
+            actions = ", ".join(r.get("actions", []))
+            if actions:
+                lines.append(f"{name} {lumis:>8}  {actions}")
+            else:
+                lines.append(f"{name} {lumis:>8}")
         else:
             errors = r.get("errors", ["unknown"])
             lines.append(f"{name} {'FAIL':>8}  {errors[0][:20]}")
