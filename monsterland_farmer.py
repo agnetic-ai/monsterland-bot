@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Monsterland Farming Bot - Multi-account passive income farmer
-Author: Hermes Agent
+Author: zabuton-ai as a SUPERAGENT
 Date: 2026-07-27
 
 Features:
