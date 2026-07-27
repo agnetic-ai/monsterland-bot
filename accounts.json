@@ -1,0 +1,10 @@
+[
+  {
+    "name": "account1",
+    "init_data": "paste_initData_disini"
+  },
+  {
+    "name": "account2",
+    "init_data": "paste_initData_disini"
+  }
+]
