@@ -5,6 +5,7 @@ Author: zabuton-ai as a SUPERAGENT
 Date: 2026-07-27
 
 Features:
+- Daily streak claim (auto-claim daily reward)
 - Vitals maintenance (use items when low)
 - Chat XP (conservative, once per cycle)
 - Keep awake (no sleep cycle)
@@ -151,7 +152,25 @@ def process_account(account, test_mode=False):
     is_sleeping = monster.get("is_sleeping", False)
     xp_tracking = monster.get("xp_tracking", {})
     
-    # 2. Wake up if sleeping (with coffee check)
+    # 2. Claim daily streak reward
+    streak_state = profile.get("daily_streak_state", {})
+    if not streak_state.get("streak_reward_claimed_today", False):
+        r = curl_request("POST", "/api/daily-streak", init_data, {"action": "claim"})
+        if "_error" not in r and r.get("success"):
+            reward = r.get("reward", {})
+            item_id = reward.get("item_id", "")
+            item_qty = reward.get("item_qty", 0)
+            lumis_reward = reward.get("lumis", 0)
+            if item_id:
+                results["actions"].append(f"daily:{item_id}x{item_qty}")
+            if lumis_reward > 0:
+                results["actions"].append(f"daily:{lumis_reward}L")
+            # Refresh inventory after daily claim
+            user_refresh = curl_request("GET", "/api/user", init_data)
+            if "_error" not in user_refresh:
+                inventory = user_refresh.get("inventory", inventory)
+    
+    # 3. Wake up if sleeping (with coffee check)
     if is_sleeping:
         coffee = inventory.get("wizard_coffee", 0)
         if coffee > 0:
