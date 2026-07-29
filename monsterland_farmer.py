@@ -37,9 +37,14 @@ VITAL_TARGET = 80.0
 # Feed if vital below this threshold
 VITAL_LOW = 50.0
 
-# Critical threshold — below this the monster is dying, so purchases
-# bypass the LUMIS reserve/budget guard. Keeping the monster alive wins.
+# Critical threshold — below this the monster is DYING. Purchases ONLY happen
+# when a vital is this low AND inventory is empty. Above this, never buy —
+# buying to top-up wastes LUMIS (LUMIS doesn't regenerate from buying).
 VITAL_CRITICAL = 30.0
+
+# When forced to buy (critical + no inventory), only buy up to this floor —
+# just enough to survive until the next cycle, NOT full 80. Saves LUMIS.
+VITAL_BUY_FLOOR = 50.0
 
 # Max LUMIS to spend on purchases per account per run (safety cap)
 # Each item costs ~300 LUMIS. 3000 = up to ~10 purchases/run.
@@ -217,35 +222,43 @@ def process_account(account, test_mode=False):
         val = vitals.get(vt, 100)
         return 100 if val is None else val
 
-    # Keep feeding while the lowest vital is below target and we still have options.
+    # Feeding policy (LUMIS-conservative — buying does NOT regenerate LUMIS):
+    #   - use_inventory (FREE): feed the lowest vital up to VITAL_TARGET (80).
+    #     Items sitting in inventory are free, so spend them freely.
+    #   - purchase (COSTS LUMIS): ONLY when a vital is CRITICAL (<30, monster
+    #     dying) AND inventory for that item is empty. And even then, only buy
+    #     up to VITAL_BUY_FLOOR (50) — just enough to survive, not full.
+    #   This means healthy monsters with empty inventory are left alone (no
+    #   wasteful buying); we only spend LUMIS to rescue a dying monster.
     while True:
-        # Pick the lowest vital that's still below target
+        # Pick the lowest vital still below target
         candidates = [(cur(vt), vt) for vt in ITEM_VITAL_MAP.values()]
         candidates = [(v, vt) for v, vt in candidates if v < VITAL_TARGET]
         if not candidates:
-            break  # all vitals topped up
+            break  # everything at/above target
         candidates.sort()  # lowest first
-        _, vital_type = candidates[0]
+        vital_now, vital_type = candidates[0]
         item = vital_item[vital_type]
 
-        # Decide action: inventory if available, else purchase within limits
-        vital_now = candidates[0][0]  # lowest vital value this iteration
-        critical = vital_now < VITAL_CRITICAL  # monster near death -> must feed
-
         if inventory.get(item, 0) > 0:
+            # Free feed from inventory — always do this up to target
             action = "use_inventory"
         else:
+            # Inventory empty. Buying only allowed to RESCUE a dying vital.
+            if vital_now >= VITAL_CRITICAL:
+                # Not dying — don't waste LUMIS topping up. Mark this vital
+                # "handled" so the loop moves on / exits instead of spinning.
+                vitals[vital_type] = VITAL_TARGET
+                continue
+            # Critical + no inventory -> buy, but only up to the survival floor.
+            if vital_now >= VITAL_BUY_FLOOR:
+                vitals[vital_type] = VITAL_TARGET  # already safe enough, stop
+                continue
             lumis_now = results["lumis"]
-            if spent + ITEM_COST > PURCHASE_BUDGET:
-                if not critical:
-                    break  # per-run purchase budget exhausted (non-critical)
-            # Reserve only protects NON-critical top-ups. A dying vital
-            # (below VITAL_CRITICAL) bypasses reserve — keeping the monster
-            # alive beats hoarding LUMIS. Still need enough to actually buy.
             if lumis_now < ITEM_COST:
-                break  # genuinely can't afford anything
-            if not critical and lumis_now - ITEM_COST < LUMIS_RESERVE:
-                break  # would dip below reserve (only enforced when safe)
+                break  # can't afford — nothing more we can do
+            if spent + ITEM_COST > PURCHASE_BUDGET:
+                break  # per-run purchase cap (safety)
             action = "purchase"
 
         r = curl_request("POST", "/api/vitals", init_data, {
