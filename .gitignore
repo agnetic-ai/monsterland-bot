@@ -1,6 +1,9 @@
 # Sensitive data - DO NOT COMMIT
 accounts.local.json
 *.local.json
+config/
+session/
+telegram_api.json
 
 # Python
 __pycache__/

@@ -31,12 +31,22 @@ ACCOUNTS_FILE = os.path.join(DIR, "accounts.local.json")
 ACCOUNTS_TEMPLATE = os.path.join(DIR, "accounts.json")
 BASE_URL = "https://lets.playmonsterland.com"
 
-# Vitals thresholds (use item if below)
-VITALS_THRESHOLD = {
-    "food": 30.0,
-    "hygiene": 30.0,
-    "energy": 20.0
-}
+# Vital target — feed until vital reaches this level
+VITAL_TARGET = 80.0
+
+# Feed if vital below this threshold
+VITAL_LOW = 50.0
+
+# Critical threshold — below this the monster is dying, so purchases
+# bypass the LUMIS reserve/budget guard. Keeping the monster alive wins.
+VITAL_CRITICAL = 30.0
+
+# Max LUMIS to spend on purchases per account per run (safety cap)
+# Each item costs ~300 LUMIS. 3000 = up to ~10 purchases/run.
+PURCHASE_BUDGET = 3000
+
+# Keep this much LUMIS in reserve — never spend below this
+LUMIS_RESERVE = 2000
 
 # Sleep threshold (sleep if energy below this)
 SLEEP_THRESHOLD = 10.0
@@ -44,12 +54,15 @@ SLEEP_THRESHOLD = 10.0
 # Level up config (min LUMIS surplus before level up)
 LEVELUP_MIN_LUMIS = 5000
 
-# Item to vital mapping
+# Item to vital mapping (tier 1 items, cheapest)
 ITEM_VITAL_MAP = {
     "magic_apple": "food",
     "magic_towel": "hygiene", 
     "wizard_coffee": "energy"
 }
+
+# Approx cost per tier-1 item purchase (LUMIS)
+ITEM_COST = 300
 
 # Chat messages pool (rotate to avoid spam detection)
 CHAT_MESSAGES = [
@@ -188,33 +201,90 @@ def process_account(account, test_mode=False):
             results["errors"].append("sleeping_no_coffee")
             return results  # Can't continue without waking
     
-    # 3. Use items if vitals low
-    for item, vital_type in ITEM_VITAL_MAP.items():
-        current_vital = vitals.get(vital_type, 100)
-        item_count = inventory.get(item, 0)
-        
-        if current_vital < VITALS_THRESHOLD.get(vital_type, 30) and item_count > 0:
-            r = curl_request("POST", "/api/vitals", init_data, {
-                "monsterId": monster_id,
-                "itemId": item,
-                "action": "use_inventory"
-            })
-            if "_error" not in r and r.get("success"):
-                # Map item names to short format
-                item_map = {
-                    "magic_apple": "u-apple",
-                    "magic_towel": "u-towel", 
-                    "wizard_coffee": "u-coffe"
-                }
-                action_name = item_map.get(item, f"used_{item}")
-                results["actions"].append(action_name)
-                results["xp"] += r.get("xpGained", 0)
-                results["lumis"] = r.get("newLumis", results["lumis"])
-                inventory[item] = item_count - 1
-            else:
-                err = r.get("_error") or r.get("error") or "unknown"
-                if "no coffee" not in err.lower():
-                    results["errors"].append(f"{item}: {err[:30]}")
+    # 3. Feed vitals ROUND-ROBIN: always feed the LOWEST vital first so the
+    #    purchase budget is shared across food/hygiene/energy instead of being
+    #    drained by whichever vital comes first alphabetically.
+    #    A monster dies if ANY vital hits 0, so balance matters more than maxing one.
+    #    use_inventory first (free), then purchase (LUMIS) within budget/reserve.
+    #    /api/vitals response returns "newVitalValue" (number) + "inventoryUpdates".
+    item_map = {"magic_apple": "apple", "magic_towel": "towel", "wizard_coffee": "coffe"}
+    vital_item = {v: k for k, v in ITEM_VITAL_MAP.items()}  # food->magic_apple, etc.
+    spent = 0  # LUMIS spent on purchases this run
+    used = {}    # item -> count used from inventory
+    bought = {}  # item -> count purchased
+
+    def cur(vt):
+        val = vitals.get(vt, 100)
+        return 100 if val is None else val
+
+    # Keep feeding while the lowest vital is below target and we still have options.
+    while True:
+        # Pick the lowest vital that's still below target
+        candidates = [(cur(vt), vt) for vt in ITEM_VITAL_MAP.values()]
+        candidates = [(v, vt) for v, vt in candidates if v < VITAL_TARGET]
+        if not candidates:
+            break  # all vitals topped up
+        candidates.sort()  # lowest first
+        _, vital_type = candidates[0]
+        item = vital_item[vital_type]
+
+        # Decide action: inventory if available, else purchase within limits
+        vital_now = candidates[0][0]  # lowest vital value this iteration
+        critical = vital_now < VITAL_CRITICAL  # monster near death -> must feed
+
+        if inventory.get(item, 0) > 0:
+            action = "use_inventory"
+        else:
+            lumis_now = results["lumis"]
+            if spent + ITEM_COST > PURCHASE_BUDGET:
+                if not critical:
+                    break  # per-run purchase budget exhausted (non-critical)
+            # Reserve only protects NON-critical top-ups. A dying vital
+            # (below VITAL_CRITICAL) bypasses reserve — keeping the monster
+            # alive beats hoarding LUMIS. Still need enough to actually buy.
+            if lumis_now < ITEM_COST:
+                break  # genuinely can't afford anything
+            if not critical and lumis_now - ITEM_COST < LUMIS_RESERVE:
+                break  # would dip below reserve (only enforced when safe)
+            action = "purchase"
+
+        r = curl_request("POST", "/api/vitals", init_data, {
+            "monsterId": monster_id,
+            "itemId": item,
+            "action": action
+        })
+
+        if "_error" in r or not r.get("success"):
+            err = r.get("_error") or r.get("error") or "unknown"
+            results["errors"].append(f"{item}:{err[:25]}")
+            # Bump this vital to target so we don't infinite-loop on a broken item
+            vitals[vital_type] = VITAL_TARGET
+            continue
+
+        # Success — update state from real response
+        results["xp"] += r.get("xpGained", 0)
+        if "newLumis" in r:
+            results["lumis"] = r["newLumis"]
+        nv = r.get("newVitalValue")
+        vitals[vital_type] = nv if isinstance(nv, (int, float)) else cur(vital_type) + 30
+
+        if action == "use_inventory":
+            used[item] = used.get(item, 0) + 1
+            inventory[item] = inventory.get(item, 0) - 1
+        else:
+            bought[item] = bought.get(item, 0) + 1
+            spent += ITEM_COST
+
+    # Log per-item summary
+    for item in ITEM_VITAL_MAP:
+        label = item_map.get(item, item)
+        u, b = used.get(item, 0), bought.get(item, 0)
+        if u and b:
+            results["actions"].append(f"{label}x{u}+buy{b}")
+        elif u:
+            results["actions"].append(f"{label}x{u}")
+        elif b:
+            results["actions"].append(f"{label}buy{b}")
     
     # 4. Chat for XP (conservative - once per cycle)
     chat_today = xp_tracking.get("chat_messages_today", 0)

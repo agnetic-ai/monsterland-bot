@@ -52,6 +52,19 @@ python3 monsterland_farmer.py
 4. F12 → Console → Type: `Telegram.WebApp.initData`
 5. Copy the string
 
+### Connection Issues?
+
+If you can't open the Monsterland Bot (Mini App fails to load or the frame
+stays blank), you need to bypass the site's `X-Frame-Options` restriction.
+Install this Chrome extension:
+
+- **Ignore X-Frame-Headers**
+
+Enable it, reload the Mini App, then grab initData from the Console as above.
+
+> initData expires after ~24 hours. Repeat this process to refresh it whenever
+> the bot starts reporting `no monster` / auth failures.
+
 ## Bot Flow
 
 ```
@@ -117,7 +130,7 @@ Total LUMIS      5161
 | `/api/user?include=monsters` | GET | Get monster state & inventory |
 | `/api/profile` | GET | Get LUMIS balance |
 | `/api/sleep` | POST | Wake monster from sleep |
-| `/api/vitals` | POST | Use inventory items |
+| `/api/vitals` | POST | Feed monster: `use_inventory` (free) or `purchase` (LUMIS) |
 | `/api/chat` | POST | Send message for XP |
 
 ## Known Limitations
