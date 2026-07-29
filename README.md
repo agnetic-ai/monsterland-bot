@@ -58,7 +58,7 @@ If you can't open the Monsterland Bot (Mini App fails to load or the frame
 stays blank), you need to bypass the site's `X-Frame-Options` restriction.
 Install this Chrome extension:
 
-- **Ignore X-Frame-Headers**
+- [**Ignore X-Frame-Headers**](https://chromewebstore.google.com/detail/ignore-x-frame-headers/gleekbfjekiniecknbkamfmkohkpodhe)
 
 Enable it, reload the Mini App, then grab initData from the Console as above.
 
