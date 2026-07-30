@@ -187,7 +187,35 @@ def process_account(account, test_mode=False):
             user_refresh = curl_request("GET", "/api/user", init_data)
             if "_error" not in user_refresh:
                 inventory = user_refresh.get("inventory", inventory)
-    
+
+    # 2b. Claim referral LUMIS income (free money — grab whatever is claimable).
+    #     Endpoint: POST /api/referral/claim {type:"lumis"} -> {claimed_lumis, new_balance}
+    #     Only accounts with referrals accrue claimable_lumis; others return 0.
+    ref = curl_request("GET", "/api/referral", init_data)
+    if "_error" not in ref:
+        claimable = ref.get("claimable_lumis", 0) or 0
+        if claimable > 0:
+            rc = curl_request("POST", "/api/referral/claim", init_data, {"type": "lumis"})
+            if "_error" not in rc and rc.get("success"):
+                got = rc.get("claimed_lumis", 0)
+                if got > 0:
+                    results["actions"].append(f"ref:{got}L")
+                    nb = rc.get("new_balance")
+                    if isinstance(nb, (int, float)):
+                        results["lumis"] = nb
+        # Auto-claim any referral GOAL that's newly reached (LUMIS/care_pack/etc).
+        # goal_progress==100 on current_goal_id means it's claimable now.
+        cur_goal = ref.get("current_goal_id")
+        claimed = ref.get("goals_claimed", []) or []
+        if cur_goal is not None and cur_goal not in claimed and ref.get("goal_progress", 0) >= 100:
+            rg = curl_request("POST", "/api/referral/claim", init_data,
+                              {"type": "goal", "id": cur_goal})
+            if "_error" not in rg and rg.get("success"):
+                results["actions"].append(f"goal{cur_goal}:done")
+                nb = rg.get("new_balance")
+                if isinstance(nb, (int, float)):
+                    results["lumis"] = nb
+
     # 3. Wake up if sleeping (with coffee check)
     if is_sleeping:
         coffee = inventory.get("wizard_coffee", 0)
